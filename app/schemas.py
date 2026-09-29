@@ -3,7 +3,7 @@
 class UserCreate(BaseModel):
     username: str
     password: str
-    role: str = "user"
+    # role is intentionally excluded from creation schema to prevent privilege escalation
 
 class UserOut(BaseModel):
     id: int

@@ -18,4 +18,5 @@ class RequestMetric(Base):
     method = Column(String)
     status_code = Column(Integer)
     process_time_ms = Column(Float)
+    client_ip = Column(String, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
