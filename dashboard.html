@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FastAPI Analytics Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#14171f;--mut:#6b7280;--bd:#e5e7eb;--acc:#0d9488;--grid:rgba(0,0,0,.08);
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html.dark{--bg:#0e1116;--card:#171b23;--fg:#e8eaef;--mut:#8b93a3;--bd:#262c38;--acc:#2dd4bf;--grid:rgba(255,255,255,.08)}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{background:var(--bg);color:var(--fg);font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;margin:0}
+.wrap{max-width:1150px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px}
+.mut{color:var(--mut)}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.between{justify-content:space-between}
+.grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:16px 0}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-bottom:16px}
+.big{font-size:26px;font-weight:600;margin-top:4px}
+.btn{border:1px solid var(--bd);background:var(--card);color:var(--fg);border-radius:10px;padding:8px 14px;font-size:14px;cursor:pointer}
+.btn:hover{border-color:var(--acc)}
+.btn:disabled{opacity:.6;cursor:wait}
+.btn-p{background:var(--acc);color:#04201d;border-color:var(--acc);font-weight:600}
+.chartbox{position:relative;height:280px}
+.tbl{overflow:auto;max-height:340px}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:560px}
+th{position:sticky;top:0;background:var(--card);text-align:left;color:var(--mut);font-weight:500;padding:8px;border-bottom:1px solid var(--bd)}
+td{padding:7px 8px;border-bottom:1px solid var(--bd);font-family:ui-monospace,Menlo,monospace}
+.b{padding:2px 8px;border-radius:99px;font-size:12px;font-weight:600}
+.s2{background:rgba(34,197,94,.15);color:#16a34a}.s4{background:rgba(245,158,11,.18);color:#d97706}.s5{background:rgba(239,68,68,.16);color:#dc2626}
+@keyframes fl{from{background:rgba(45,212,191,.28)}to{background:transparent}}
+tr.new{animation:fl 1.2s}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--mut);display:inline-block}
+.dot.live{background:#22c55e}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="row between">
+    <div>
+      <h1 style="font-size:20px;font-weight:600;margin:0">Analytics Engine</h1>
+      <p class="mut" style="font-size:14px;margin:4px 0 0"><span id="dot" class="dot"></span> <span id="src">Simulated data</span></p>
+    </div>
+    <div class="row">
+      <label class="row" style="gap:8px;font-size:14px;cursor:pointer">
+        <input type="checkbox" id="live" style="width:18px;height:18px;accent-color:var(--acc);cursor:pointer">
+        <span>Live polling (3s)</span>
+      </label>
+      <button id="fetchBtn" type="button" class="btn btn-p">Fetch /analytics/summary</button>
+      <button id="themeBtn" type="button" class="btn" title="Toggle dark/light mode">🌙 Dark</button>
+    </div>
+  </header>
+
+  <section class="grid4">
+    <div class="card"><div class="mut" style="font-size:12px">Total Requests</div><div id="m-total" class="big">0</div></div>
+    <div class="card"><div class="mut" style="font-size:12px">Average Latency (ms)</div><div id="m-lat" class="big">0</div></div>
+    <div class="card"><div class="mut" style="font-size:12px">Error Rate (%)</div><div id="m-err" class="big">0</div></div>
+    <div class="card"><div class="mut" style="font-size:12px">Active Endpoints</div><div id="m-act" class="big">0</div></div>
+  </section>
+
+  <section class="grid3">
+    <div class="card" style="grid-column:span 2;min-width:0">
+      <div style="font-size:14px;font-weight:500;margin-bottom:8px">Latency over time (ms)</div>
+      <div class="chartbox"><canvas id="lineC"></canvas></div>
+    </div>
+    <div class="card" style="min-width:0">
+      <div style="font-size:14px;font-weight:500;margin-bottom:8px">Status code distribution</div>
+      <div class="chartbox"><canvas id="dnC"></canvas></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="row between" style="margin-bottom:8px">
+      <div style="font-size:14px;font-weight:500">Live request log</div>
+      <div class="row" style="gap:8px">
+        <select id="filter" class="btn" aria-label="Filter by status code">
+          <option value="all">All</option><option value="200">200</option><option value="401">401</option><option value="429">429</option>
+        </select>
+        <button id="clearBtn" type="button" class="btn">Clear Logs</button>
+      </div>
+    </div>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Time</th><th>Method</th><th>Path</th><th>Status</th><th>Client IP</th><th>Latency</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div id="empty" class="mut hidden" style="text-align:center;padding:24px;font-size:14px">No log entries to show</div>
+    </div>
+  </section>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const $ = id => document.getElementById(id);
+  const EP = [
+    {m:'POST', p:'/api/v1/auth/login', base:95},
+    {m:'GET',  p:'/api/v1/auth/me', base:40},
+    {m:'GET',  p:'/api/v1/analytics/summary', base:110}
+  ];
+  const COLORS = ['#2dd4bf', '#60a5fa', '#f59e0b'];
+  const IPS = ['127.0.0.1', '10.0.0.14', '192.168.1.23', '172.16.4.8', '203.0.113.42'];
+  const rnd = (a, b) => Math.random() * (b - a) + a;
+  const pick = a => a[Math.floor(Math.random() * a.length)];
+  const pad = n => String(n).padStart(2, '0');
+  const clock = d => pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  const hasChart = typeof Chart !== 'undefined';
+
+  const S = {
+    total: 0, latSum: 0, errs: 0, codes: {200: 0, 401: 0, 429: 0}, recent: [],
+    shown: {total: 0, lat: 0, err: 0, act: 0}, timer: null
+  };
+
+  // ---------- Telemetry generation ----------
+  function mockReq(e) {
+    e = e || pick(EP);
+    const r = Math.random();
+    const st = r < 0.72 ? 200 : r < 0.90 ? 401 : 429;
+    return {t: new Date(), m: e.m, p: e.p, st: st, ip: pick(IPS), lat: Math.round(rnd(20, 150))};
+  }
+  function ingest(r) {
+    S.total++; S.latSum += r.lat; if (r.st >= 400) S.errs++;
+    S.codes[r.st]++;
+    S.recent.unshift(r.p); if (S.recent.length > 30) S.recent.pop();
+  }
+
+  // ---------- Metric cards with animated counters ----------
+  function tween(id, from, to, dec) {
+    const el = $(id), t0 = performance.now(), dur = 600;
+    (function step(t) {
+      const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3), v = from + (to - from) * e;
+      el.textContent = dec ? v.toFixed(dec) : Math.round(v).toLocaleString();
+      if (k < 1) requestAnimationFrame(step);
+    })(t0);
+  }
+  function renderMetrics() {
+    const v = {
+      total: S.total,
+      lat: S.total ? S.latSum / S.total : 0,
+      err: S.total ? (S.errs / S.total) * 100 : 0,
+      act: new Set(S.recent).size
+    };
+    tween('m-total', S.shown.total, v.total, 0);
+    tween('m-lat', S.shown.lat, v.lat, 1);
+    tween('m-err', S.shown.err, v.err, 1);
+    tween('m-act', S.shown.act, v.act, 0);
+    S.shown = v;
+  }
+
+  // ---------- Log table ----------
+  function rowEl(r, isNew) {
+    const tr = document.createElement('tr');
+    tr.dataset.st = r.st;
+    if (isNew) tr.className = 'new';
+    const cls = r.st < 300 ? 's2' : r.st < 500 ? 's4' : 's5';
+    tr.innerHTML = '<td>' + clock(r.t) + '</td><td>' + r.m + '</td><td>' + r.p +
+      '</td><td><span class="b ' + cls + '">' + r.st + '</span></td><td>' + r.ip + '</td><td>' + r.lat + ' ms</td>';
+    return tr;
+  }
+  function applyFilter() {
+    const f = $('filter').value;
+    let visible = 0;
+    Array.from($('rows').children).forEach(tr => {
+      const show = f === 'all' || tr.dataset.st === f;
+      tr.classList.toggle('hidden', !show);
+      if (show) visible++;
+    });
+    $('empty').classList.toggle('hidden', visible > 0);
+  }
+  function addRow(r, isNew) {
+    const tb = $('rows');
+    tb.insertBefore(rowEl(r, isNew), tb.firstChild);
+    while (tb.children.length > 100) tb.removeChild(tb.lastChild);
+  }
+  $('filter').addEventListener('change', applyFilter);
+  $('clearBtn').addEventListener('click', function () {
+    $('rows').innerHTML = '';
+    applyFilter();
+  });
+
+  // ---------- Charts ----------
+  const labels = [], series = EP.map(() => []);
+  let lineC = null, dnC = null;
+  function pushPoint(batch) {
+    labels.push(clock(new Date())); if (labels.length > 15) labels.shift();
+    EP.forEach((e, i) => {
+      const hits = batch.filter(r => r.p === e.p);
+      const v = hits.length ? hits.reduce((a, r) => a + r.lat, 0) / hits.length : e.base * rnd(0.8, 1.2);
+      series[i].push(Math.round(v)); if (series[i].length > 15) series[i].shift();
+    });
+  }
+  function renderCharts() {
+    if (!hasChart) return;
+    lineC.update();
+    dnC.data.datasets[0].data = [S.codes[200], S.codes[401], S.codes[429]];
+    dnC.update();
+  }
+  if (hasChart) {
+    lineC = new Chart($('lineC'), {
+      type: 'line',
+      data: {labels: labels, datasets: EP.map((e, i) => ({
+        label: e.p.replace('/api/v1', ''), data: series[i], borderColor: COLORS[i], backgroundColor: COLORS[i],
+        borderWidth: 2, pointRadius: 2, tension: 0.35
+      }))},
+      options: {responsive: true, maintainAspectRatio: false, animation: {duration: 400},
+        interaction: {mode: 'index', intersect: false},
+        plugins: {legend: {position: 'bottom', labels: {boxWidth: 10, usePointStyle: true}}},
+        scales: {x: {grid: {display: false}}, y: {beginAtZero: true, title: {display: true, text: 'ms'}}}}
+    });
+    dnC = new Chart($('dnC'), {
+      type: 'doughnut',
+      data: {labels: ['200 OK', '401 Unauthorized', '429 Rate Limited'],
+        datasets: [{data: [0, 0, 0], backgroundColor: ['#22c55e', '#f59e0b', '#ef4444'], borderWidth: 0}]},
+      options: {responsive: true, maintainAspectRatio: false, cutout: '65%', animation: {duration: 400},
+        plugins: {legend: {position: 'bottom', labels: {boxWidth: 10, usePointStyle: true}}}}
+    });
+  } else {
+    document.querySelectorAll('.chartbox').forEach(b => {
+      b.innerHTML = '<p class="mut" style="padding:24px;font-size:14px">Chart.js failed to load (CDN blocked?). The rest of the dashboard still works.</p>';
+    });
+  }
+
+  // ---------- Dark / light mode ----------
+  function applyTheme(dark) {
+    document.documentElement.classList.toggle('dark', dark);
+    $('themeBtn').textContent = dark ? '☀️ Light' : '🌙 Dark';
+    if (!hasChart) return;
+    const cs = getComputedStyle(document.documentElement);
+    const txt = cs.getPropertyValue('--mut').trim(), grid = cs.getPropertyValue('--grid').trim();
+    Chart.defaults.color = txt;
+    const ls = lineC.options.scales;
+    ls.x.ticks.color = txt; ls.y.ticks.color = txt; ls.y.grid.color = grid; ls.y.title.color = txt;
+    lineC.options.plugins.legend.labels.color = txt;
+    dnC.options.plugins.legend.labels.color = txt;
+    lineC.update('none'); dnC.update('none');
+  }
+  $('themeBtn').addEventListener('click', function () {
+    applyTheme(!document.documentElement.classList.contains('dark'));
+  });
+  applyTheme(window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+
+  // ---------- Simulation tick ----------
+  function tick(n) {
+    n = n || Math.floor(rnd(1, 4));
+    const batch = [];
+    for (let i = 0; i < n; i++) { const r = mockReq(); batch.push(r); ingest(r); addRow(r, true); }
+    pushPoint(batch); applyFilter(); renderCharts(); renderMetrics();
+  }
+
+  // ---------- Live polling checkbox ----------
+  $('live').addEventListener('change', function () {
+    if (this.checked) {
+      $('dot').classList.add('live');
+      $('src').textContent = 'Live simulation (polling every 3s)';
+      tick();
+      S.timer = setInterval(() => tick(), 3000);
+    } else {
+      clearInterval(S.timer); S.timer = null;
+      $('dot').classList.remove('live');
+      $('src').textContent = 'Simulated data (paused)';
+    }
+  });
+
+  // ---------- Fetch from FastAPI, fallback to simulated ----------
+  function applySummary(total, lat, errPct) {
+    S.total = total; S.latSum = total * lat; S.errs = Math.round(total * errPct / 100);
+    renderMetrics();
+  }
+  $('fetchBtn').addEventListener('click', async function () {
+    const btn = this, label = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Fetching…';
+    const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 3000);
+    try {
+      // Admin-only endpoint: add headers: {Authorization: 'Bearer <token>'} if needed
+      const res = await fetch('http://127.0.0.1:8000/api/v1/analytics/summary', {signal: ctl.signal});
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const d = await res.json();
+      let err = d.error_rate ?? d.error_rate_percent ?? ((d.error_rate_4xx || 0) + (d.error_rate_5xx || 0));
+      if (err > 0 && err <= 1) err *= 100;
+      applySummary(d.total_requests ?? d.total ?? S.total, d.avg_response_time ?? d.avg_latency_ms ?? 0, err);
+      $('src').textContent = 'Live data from 127.0.0.1:8000';
+    } catch (e) {
+      // Unreachable, timed out, or blocked by CORS/CSP: generate realistic simulated backend data
+      applySummary(Math.round(rnd(12000, 15000)), rnd(55, 95), rnd(3, 9));
+      tick(6);
+      $('src').textContent = 'Server unreachable (' + (e.name === 'AbortError' ? 'timeout' : e.message) + ') — showing simulated backend data';
+    } finally {
+      clearTimeout(to); btn.disabled = false; btn.textContent = label;
+    }
+  });
+
+  // ---------- Seed initial data ----------
+  for (let i = 0; i < 15; i++) {
+    const batch = [];
+    for (let j = 0; j < 3; j++) { const r = mockReq(); batch.push(r); ingest(r); if (i === 14) addRow(r, false); }
+    pushPoint(batch);
+  }
+  for (let i = 0; i < 12; i++) { const r = mockReq(); r.t = new Date(Date.now() - (i + 1) * 4000); ingest(r); const tb = $('rows'); tb.appendChild(rowEl(r, false)); }
+  applyFilter(); renderCharts(); renderMetrics();
+});
+</script>
+</body>
+</html>
